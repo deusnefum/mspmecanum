@@ -1,6 +1,6 @@
 MCU=msp430g2553
 
-CFLAGS=-mmcu=${MCU} -std=c99 -pedantic -Wall -Os
+CFLAGS=-mmcu=${MCU} -std=c99 -pedantic -Wall -O2
 
 .PHONY: all lint prog
 
@@ -13,10 +13,10 @@ skateboard.bin: main.o trig.o
 	msp430-elf-gcc ${CFLAGS} -c $<
 
 lint:
-	msp430-elf-gcc -fsyntax-only -std=c99 -mmcu=${MCU} -std=c99 -pedantic -Wall -g -O2 *.c -o osk.bin
+	msp430-elf-gcc ${CFLAGS} -fsyntax-only *.c
 
 clean:
 	rm -f *.bin *.o
 
-prog:
-	mspdebug rf2500 'prog osk.bin'
+prog: skateboard.bin
+	mspdebug rf2500 'prog skateboard.bin'
