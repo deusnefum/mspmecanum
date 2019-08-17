@@ -96,10 +96,10 @@ int main()
 	};
 
 	struct pwm_out outputs[4] = {
-		{0, ((SAMPLE_RANGE/2)+SAMPLE_MIN)},
-		{0, ((SAMPLE_RANGE/2)+SAMPLE_MIN)},
-		{0, ((SAMPLE_RANGE/2)+SAMPLE_MIN)},
-		{0, ((SAMPLE_RANGE/2)+SAMPLE_MIN)}
+		{((SAMPLE_RANGE/2)+SAMPLE_MIN),0},
+		{((SAMPLE_RANGE/2)+SAMPLE_MIN),0},
+		{((SAMPLE_RANGE/2)+SAMPLE_MIN),0},
+		{((SAMPLE_RANGE/2)+SAMPLE_MIN),0}
 	};
 
 	unsigned int p1inbuf; // so we can capture a single 'frame' of input that won't change under us
@@ -153,6 +153,7 @@ int main()
 		outputs[M2].width = FLOAT2PWM(v_d * trig_cosf(-theta_d + M_PI/4) + v_theta);
 		outputs[M3].width = FLOAT2PWM(v_d * trig_cosf(-theta_d + M_PI/4) - v_theta);
 		outputs[M4].width = FLOAT2PWM(v_d * trig_sinf(-theta_d + M_PI/4) + v_theta);
+
 		
 		// Update PWM targets
 

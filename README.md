@@ -10,4 +10,5 @@ regular robot.
 
 This is probably garbage code riddled with bugs and poorly implemented or misunderstood everything.
 
-As of right now (2019-08-11) the code is too big to fit on the inteded chip, an MSP430G2553.
+The code now compiles and seemingly fits on an MSP430G2553. I wrote some trig funcs that hopefully
+strike the right balance between fast and accurate.
