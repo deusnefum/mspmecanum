@@ -6,14 +6,14 @@ CFLAGS=-mmcu=${MCU} -std=c99 -pedantic -Wall -Os
 
 all: skateboard.bin
 
-skateboard.bin: *.o
-	msp430-elf-gcc ${CFLAGS} $< -o skateboard.bin -lm
+skateboard.bin: main.o trig.o
+	msp430-elf-gcc ${CFLAGS} $^ -o skateboard.bin -lm
 
 %.o: %.c
 	msp430-elf-gcc ${CFLAGS} -c $<
 
 lint:
-	msp430-elf-gcc -fsyntax-only -std=c99 -mmcu=${MCU} -std=c99 -pedantic -Wall -g -O2 osk2.c -o osk.bin
+	msp430-elf-gcc -fsyntax-only -std=c99 -mmcu=${MCU} -std=c99 -pedantic -Wall -g -O2 *.c -o osk.bin
 
 clean:
 	rm -f *.bin *.o

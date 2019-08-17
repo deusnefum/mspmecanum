@@ -1,6 +1,8 @@
 #include <msp430.h>
 #include <stdint.h>
 #include <fastmath.h>
+#include "trig.h"
+
 
 #define X_AXIS BIT0
 #define Y_AXIS BIT1
@@ -14,12 +16,25 @@
 #define ALL_AXES (X_AXIS + Y_AXIS + A_AXIS)
 #define ALL_MOTORS (MOTOR1 + MOTOR2 + MOTOR3 + MOTOR4)
 
-#define PWM_WINDOW (200) // 20ms window, handled in 0.1ms frames
+// Sample period in microseconds
+#define SAMPLE_PERIOD_US (10)
 
-#define FLOAT2PWM(in) ((unsigned int) in*100+150)
-#define PWM2FLOAT(in) (((float)in-150.0)/100)
+// The total window we'll be sampling for PWM
+#define PWM_WINDOW_US (20000)
 
-#define M_PI 3.14159267
+// The number of frames/samples we'll get
+#define PWM_WINDOW (PWM_WINDOW_US/SAMPLE_PERIOD_US)
+
+// The PWM input ranges from 500us to 2500us so we to scale that range to a signed int
+#define PWM_MIN_US  500
+#define PWM_MAX_US 2500
+#define PWM_RANGE_US (PWM_MAX_US-PWM_MIN_US)
+#define SAMPLE_RANGE (PWM_RANGE_US/SAMPLE_PERIOD_US)
+#define SAMPLE_MIN (PWM_MIN_US/SAMPLE_PERIOD_US)
+
+#define FLOAT2PWM(in) (((unsigned int) in)*(SAMPLE_RANGE/2)+(SAMPLE_RANGE/2)+SAMPLE_MIN)
+#define PWM2FLOAT(in) (((((float)in)-((SAMPLE_RANGE/2)+SAMPLE_MIN)))/(SAMPLE_RANGE/2))
+
 
 enum pwm_buffers {
 	XBUF,
@@ -48,13 +63,6 @@ struct pwm_out {
 
 void calc_pwm(struct pwm *input, unsigned int cur);
 void set_pwm_output (struct pwm_out *out, unsigned int motor);
-	
-inline void wait_us(unsigned int us)
-{
-	TACCR0 = TAR + (us);
-	TACCTL0 = CCIE;
-	__low_power_mode_0();
-}
 
 int main()
 {
@@ -89,9 +97,10 @@ int main()
 
 	// Every 0.1ms (100 microseconds), read our inputs, do some math, update our outputs. Easy, right?
 	for (;;) {
-		// set the interrupt time to 0.1ms ahead of current time (assuming 1MHz clock)
-		TACCR0 = TAR + 100;
+		// set the interrupt time to SAMPLE_PERIOD_US ahead of current time (assuming 1MHz clock)
+		TACCR0 = TAR + SAMPLE_PERIOD_US;
 
+		// store P1IN value so it can't change under us / we're looking at a single slice in time
 		p1inbuf = P1IN;
 
 		calc_pwm(&inputs[XBUF], p1inbuf & X_AXIS ? 1 : 0);
@@ -121,27 +130,23 @@ int main()
 		// do trig here to reconcile X, Y, and A axes
 		// LMAO, I just realized I know how to reconsile X and Y but A is 🤷
 		// Okay, internet to the rescue... found some equations to crib
-		// convert X, Y, A into -1 to 1 floats
+
 		float x = PWM2FLOAT(inputs[XBUF].buf);
 		float y = PWM2FLOAT(inputs[YBUF].buf);
 		float a = -PWM2FLOAT(inputs[ABUF].buf);
 
-		// derrive theta, magnitude, and rotation
-		float theta_d = tan(x/y);
-		float v_d = sqrt(pow(x,2) + pow(y,2));
-		// float v_theta = a;
+		// derive theta, magnitude, and rotation
+		float theta_d = trig_tanf(x/y);
+		float v_d = 0; sqrt(x*x + y*y);
+		float v_theta = (a + 1) * M_PI;
 
-		unsigned int tmp;
-		tmp = FLOAT2PWM(v_d * sin(-theta_d + M_PI/4) - a);
-		outputs[M1].width = tmp;
-/*
-		outputs[M1].width = FLOAT2PWM(v_d * sin(-theta_d + M_PI/4) - a);
-		outputs[M2].width = FLOAT2PWM(v_d * cos(-theta_d + M_PI/4) + a);
-		outputs[M3].width = FLOAT2PWM(v_d * cos(-theta_d + M_PI/4) - a);
-		outputs[M4].width = FLOAT2PWM(v_d * sin(-theta_d + M_PI/4) + a);
+		outputs[M1].width = FLOAT2PWM(v_d * trig_sinf(-theta_d + M_PI/4) - v_theta);
+		outputs[M2].width = FLOAT2PWM(v_d * trig_cosf(-theta_d + M_PI/4) + v_theta);
+		outputs[M3].width = FLOAT2PWM(v_d * trig_cosf(-theta_d + M_PI/4) - v_theta);
+		outputs[M4].width = FLOAT2PWM(v_d * trig_sinf(-theta_d + M_PI/4) + v_theta);
 		
 		// Update PWM targets
-*/
+
 		// Actually set output pins high/low
 		set_pwm_output(&outputs[M1], MOTOR1);
 		set_pwm_output(&outputs[M2], MOTOR2);
@@ -160,6 +165,7 @@ inline void calc_pwm(struct pwm *input, unsigned int cur) {
 	if (cur == input->prev) {
 		if (cur) {
 			input->count++;
+			// input->count += 0xFFFF/SAMPLE_RANGE - 1;
 		}
 	} else {
 		if (cur) {
