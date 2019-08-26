@@ -31,10 +31,14 @@
 #define PWM_RANGE_US (PWM_MAX_US-PWM_MIN_US)
 #define SAMPLE_RANGE (PWM_RANGE_US/SAMPLE_PERIOD_US)
 #define SAMPLE_MIN (PWM_MIN_US/SAMPLE_PERIOD_US)
+#define SAMPLE_MAX (PWM_MAX_US/SAMPLE_PERIOD_US)
 
-#define FLOAT2PWM(in) (((unsigned int) in)*(SAMPLE_RANGE/2)+(SAMPLE_RANGE/2)+SAMPLE_MIN)
+#define FLOAT2PWM(in) (((unsigned int) in)*(SAMPLE_RANGE)+SAMPLE_MIN)
 #define PWM2FLOAT(in) (((((float)in)-((SAMPLE_RANGE/2)+SAMPLE_MIN)))/(SAMPLE_RANGE/2))
 
+#define MAX(_v,_max) (_v > _max ? _max : _v)
+#define MIN(_v,_min) (_v < _min ? _min : _v)
+#define MINMAX(_v, _min, _max) (MAX(MIN(_v, _min),_max))
 
 enum pwm_buffers {
 	XBUF,
@@ -60,9 +64,10 @@ struct pwm_out {
 	signed int count; // iterator variable
 };
 
-
 void calc_pwm(struct pwm *input, unsigned int cur);
 void set_pwm_output (struct pwm_out *out, unsigned int motor);
+
+int recompute_flag = 1;
 
 int main()
 {
@@ -76,8 +81,8 @@ int main()
 	/* load calibration settings
 	 * Timing will break if this changes! 
 	 */
-	BCSCTL1 = CALBC1_1MHZ;
-	DCOCTL = CALDCO_1MHZ;
+	BCSCTL1 = CALBC1_16MHZ;
+	DCOCTL = CALDCO_16MHZ;
 
 	// Setup timer
 	TACTL = MC_2 | ID_0 | TASSEL_2 | TACLR; // continuous | no prescale | SMCLCK | CLEAR
@@ -90,9 +95,9 @@ int main()
 	
 	// pwm buffers
 	struct pwm inputs[3] = {
-		 {0,0,0},
-		 {0,0,0},
-		 {0,0,0}
+		 {((SAMPLE_RANGE/2)+SAMPLE_MIN),0,0},
+		 {((SAMPLE_RANGE/2)+SAMPLE_MIN),0,0},
+		 {((SAMPLE_RANGE/2)+SAMPLE_MIN),0,0}
 	};
 
 	struct pwm_out outputs[4] = {
@@ -103,11 +108,12 @@ int main()
 	};
 
 	unsigned int p1inbuf; // so we can capture a single 'frame' of input that won't change under us
-
 	// Every 0.1ms (100 microseconds), read our inputs, do some math, update our outputs. Easy, right?
+	TACCTL0 = CCIE; 
 	for (;;) {
 		// set the interrupt time to SAMPLE_PERIOD_US ahead of current time (assuming 1MHz clock)
-		TACCR0 = TAR + SAMPLE_PERIOD_US;
+		// emprically determined timing adjustment
+		TACCR0 = TAR + (SAMPLE_PERIOD_US-1) * 16;
 
 		// store P1IN value so it can't change under us / we're looking at a single slice in time
 		p1inbuf = P1IN;
@@ -139,21 +145,27 @@ int main()
 		// do trig here to reconcile X, Y, and A axes
 		// LMAO, I just realized I know how to reconsile X and Y but A is 🤷
 		// Okay, internet to the rescue... found some equations to crib
+		// if (cycles++ % (1<<15) == 0 ) {
+		// Don't do all this expensive floating point math unless one of the inputs has changed
+		// Doesn't this mean that sending a lot of commands will diminish performance???
+		if (recompute_flag) {
+			float x = PWM2FLOAT(inputs[XBUF].buf);
+			float y = PWM2FLOAT(inputs[YBUF].buf);
+			float a = -PWM2FLOAT(inputs[ABUF].buf);
 
-		float x = PWM2FLOAT(inputs[XBUF].buf);
-		float y = PWM2FLOAT(inputs[YBUF].buf);
-		float a = -PWM2FLOAT(inputs[ABUF].buf);
+				
+			// derive theta, magnitude, and rotation
+			float theta_d = trig_tanf(x/y);
+			float v_d = sqrtf(x*x + y*y);
+			float v_theta = (a + 1) * M_PI;
+			
+			outputs[M1].width = MINMAX(FLOAT2PWM(v_d * trig_sinf(-theta_d + M_PI/4) - v_theta),SAMPLE_MIN,SAMPLE_MAX);
+			outputs[M2].width = MINMAX(FLOAT2PWM(v_d * trig_cosf(-theta_d + M_PI/4) + v_theta),SAMPLE_MIN,SAMPLE_MAX);
+			outputs[M3].width = MINMAX(FLOAT2PWM(v_d * trig_cosf(-theta_d + M_PI/4) - v_theta),SAMPLE_MIN,SAMPLE_MAX);
+			outputs[M4].width = MINMAX(FLOAT2PWM(v_d * trig_sinf(-theta_d + M_PI/4) + v_theta),SAMPLE_MIN,SAMPLE_MAX);
 
-		// derive theta, magnitude, and rotation
-		float theta_d = trig_tanf(x/y);
-		float v_d = 0; sqrtf(x*x + y*y);
-		float v_theta = (a + 1) * M_PI;
-
-		outputs[M1].width = FLOAT2PWM(v_d * trig_sinf(-theta_d + M_PI/4) - v_theta);
-		outputs[M2].width = FLOAT2PWM(v_d * trig_cosf(-theta_d + M_PI/4) + v_theta);
-		outputs[M3].width = FLOAT2PWM(v_d * trig_cosf(-theta_d + M_PI/4) - v_theta);
-		outputs[M4].width = FLOAT2PWM(v_d * trig_sinf(-theta_d + M_PI/4) + v_theta);
-
+			recompute_flag = 0;
+		}
 		
 		// Update PWM targets
 
@@ -163,7 +175,6 @@ int main()
 		set_pwm_output(&outputs[M3], MOTOR3);
 		set_pwm_output(&outputs[M4], MOTOR4);
 
-		TACCTL0 = CCIE; // I think I can set this once and then don't have to keep setting it
 		// Go to sleep until TAR hits the value in TACCR0
 		__low_power_mode_0();
 	}
@@ -181,6 +192,7 @@ inline void calc_pwm(struct pwm *input, unsigned int cur) {
 		if (cur) {
 			input->count = 1;
 		} else {
+			recompute_flag = 1;
 			input->buf = input->count;
 		}
 	}
@@ -188,7 +200,7 @@ inline void calc_pwm(struct pwm *input, unsigned int cur) {
 
 inline void set_pwm_output (struct pwm_out *out, unsigned int motor) {
 	if (--out->count <= 0) {
-		if (P1OUT & MOTOR1) {
+		if (P1OUT & motor) {
 			// output was high, time to switch to low-output
 			out->count = PWM_WINDOW - out->width;
 		} else {
