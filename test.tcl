@@ -29,7 +29,7 @@ proc FIX162PWM {in} {
 }
 
 set x [PWM2FIX16 150]
-set y [PWM2FIX16 50]
+set y [PWM2FIX16 150]
 set a [PWM2FIX16 150]
 
 # // derive theta, magnitude, and rotation
