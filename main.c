@@ -33,7 +33,7 @@
 #define SAMPLE_MIN (PWM_MIN_US/SAMPLE_PERIOD_US)
 #define SAMPLE_MAX (PWM_MAX_US/SAMPLE_PERIOD_US)
 
-#define FLOAT2PWM(in) (((unsigned int) in)*(SAMPLE_RANGE)+SAMPLE_MIN)
+#define FLOAT2PWM(in) (((unsigned int) in)*(SAMPLE_RANGE)+SAMPLE_MIN+SAMPLE_RANGE/2)
 #define PWM2FLOAT(in) (((((float)in)-((SAMPLE_RANGE/2)+SAMPLE_MIN)))/(SAMPLE_RANGE/2))
 
 #define MAX(_v,_max) (_v > _max ? _max : _v)
@@ -194,6 +194,10 @@ inline void calc_pwm(struct pwm *input, unsigned int cur) {
 		} else {
 			recompute_flag = 1;
 			input->buf = input->count;
+			if (input->buf < SAMPLE_MIN)
+				input->buf = SAMPLE_MIN;
+			if (input->buf > SAMPLE_MAX)
+				input->buf = SAMPLE_MAX;
 		}
 	}
 }

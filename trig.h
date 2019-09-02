@@ -5,3 +5,5 @@
 
 float trig_sinf (float x);
 float trig_cosf (float x);
+float trig_atan (float x);
+float trig_atan2 (float x, float y);
