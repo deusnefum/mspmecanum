@@ -1,13 +1,14 @@
 MCU=msp430g2553
 
 CFLAGS=-mmcu=${MCU} -std=c99 -pedantic -Wall -O2
+LDFLAGS=-Llibfixmath/libfixmath -lfixmath
 
 .PHONY: all lint prog
 
 all: skateboard.bin
 
-skateboard.bin: main.o trig.o
-	msp430-elf-gcc ${CFLAGS} $^ -o skateboard.bin -lm
+skateboard.bin: main.o
+	msp430-elf-gcc ${CFLAGS} $^ -o skateboard.bin ${LDFLAGS}
 
 %.o: %.c
 	msp430-elf-gcc ${CFLAGS} -c $<

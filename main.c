@@ -1,7 +1,6 @@
 #include <msp430.h>
 #include <stdint.h>
-#include <fastmath.h>
-#include "trig.h"
+#include "libfixmath/libfixmath/fixmath.h"
 
 
 #define X_AXIS BIT0
@@ -34,7 +33,9 @@
 #define SAMPLE_MAX (PWM_MAX_US/SAMPLE_PERIOD_US)
 
 #define FLOAT2PWM(in) (((unsigned int) in)*(SAMPLE_RANGE)+SAMPLE_MIN)
-#define PWM2FLOAT(in) (((((float)in)-((SAMPLE_RANGE/2)+SAMPLE_MIN)))/(SAMPLE_RANGE/2))
+
+#define FIX162PWM(in) ((unsigned int)fix16_to_float(fix16_add(fix16_mul(in,fix16_from_int(SAMPLE_RANGE)),fix16_from_int(SAMPLE_MIN))))
+#define PWM2FIX16(in) (fix16_div(fix16_sub(fix16_from_int(in),fix16_from_int(((SAMPLE_RANGE/2)+SAMPLE_MIN))), (SAMPLE_RANGE/2)))
 
 #define MAX(_v,_max) (_v > _max ? _max : _v)
 #define MIN(_v,_min) (_v < _min ? _min : _v)
@@ -64,7 +65,7 @@ struct pwm_out {
 	signed int count; // iterator variable
 };
 
-void calc_pwm(struct pwm *input, unsigned int cur);
+void get_pwm_input (struct pwm *input, unsigned int cur);
 void set_pwm_output (struct pwm_out *out, unsigned int motor);
 
 int recompute_flag = 1;
@@ -95,7 +96,7 @@ int main()
 	
 	// pwm buffers
 	struct pwm inputs[3] = {
-		 {((SAMPLE_RANGE/2)+SAMPLE_MIN),0,0},
+		 {((SAMPLE_RANGE)+SAMPLE_MIN),0,0},
 		 {((SAMPLE_RANGE/2)+SAMPLE_MIN),0,0},
 		 {((SAMPLE_RANGE/2)+SAMPLE_MIN),0,0}
 	};
@@ -117,11 +118,11 @@ int main()
 
 		// store P1IN value so it can't change under us / we're looking at a single slice in time
 		p1inbuf = P1IN;
-
-		calc_pwm(&inputs[XBUF], p1inbuf & X_AXIS ? 1 : 0);
-		calc_pwm(&inputs[YBUF], p1inbuf & Y_AXIS ? 1 : 0);
-		calc_pwm(&inputs[ABUF], p1inbuf & A_AXIS ? 1 : 0);
-
+/*
+		get_pwm_input(&inputs[XBUF], p1inbuf & X_AXIS ? 1 : 0);
+		get_pwm_input(&inputs[YBUF], p1inbuf & Y_AXIS ? 1 : 0);
+		get_pwm_input(&inputs[ABUF], p1inbuf & A_AXIS ? 1 : 0);
+*/
 		/*
 		 * The value in inputs[].buf is the length of the pwm pulse. 150 (1.5ms) is neutral
 		 * 50 (0.5ms) is minimum value and 250 (2.5ms) is maximum value
@@ -148,21 +149,24 @@ int main()
 		// if (cycles++ % (1<<15) == 0 ) {
 		// Don't do all this expensive floating point math unless one of the inputs has changed
 		// Doesn't this mean that sending a lot of commands will diminish performance???
-		if (recompute_flag) {
-			float x = PWM2FLOAT(inputs[XBUF].buf);
-			float y = PWM2FLOAT(inputs[YBUF].buf);
-			float a = -PWM2FLOAT(inputs[ABUF].buf);
+		if (recompute_flag || 1) {
+			fix16_t x = PWM2FIX16(inputs[XBUF].buf);
+			fix16_t y = PWM2FIX16(inputs[YBUF].buf);
+			fix16_t a = PWM2FIX16(inputs[ABUF].buf);
 
-				
-			// derive theta, magnitude, and rotation
-			float theta_d = trig_tanf(x/y);
-			float v_d = sqrtf(x*x + y*y);
-			float v_theta = (a + 1) * M_PI;
 			
-			outputs[M1].width = MINMAX(FLOAT2PWM(v_d * trig_sinf(-theta_d + M_PI/4) - v_theta),SAMPLE_MIN,SAMPLE_MAX);
-			outputs[M2].width = MINMAX(FLOAT2PWM(v_d * trig_cosf(-theta_d + M_PI/4) + v_theta),SAMPLE_MIN,SAMPLE_MAX);
-			outputs[M3].width = MINMAX(FLOAT2PWM(v_d * trig_cosf(-theta_d + M_PI/4) - v_theta),SAMPLE_MIN,SAMPLE_MAX);
-			outputs[M4].width = MINMAX(FLOAT2PWM(v_d * trig_sinf(-theta_d + M_PI/4) + v_theta),SAMPLE_MIN,SAMPLE_MAX);
+			// derive theta, magnitude, and rotation
+
+			fix16_t theta_d = fix16_atan2(x,y);
+			fix16_t v_d = fix16_sqrt(fix16_add(fix16_mul(x,x), fix16_mul(y,y)));
+			fix16_t v_theta = fix16_from_int(0);
+
+			fix16_t trig_arg = fix16_sub(THREE_PI_DIV_4, theta_d);
+
+			outputs[M1].width = FIX162PWM(fix16_sub(fix16_mul(v_d, fix16_sin(trig_arg)), v_theta));
+			outputs[M2].width = FIX162PWM(fix16_add(fix16_mul(v_d, fix16_cos(trig_arg)), v_theta));
+			outputs[M3].width = FIX162PWM(fix16_sub(fix16_mul(v_d, fix16_cos(trig_arg)), v_theta));
+			outputs[M4].width = FIX162PWM(fix16_add(fix16_mul(v_d, fix16_sin(trig_arg)), v_theta));
 
 			recompute_flag = 0;
 		}
@@ -182,18 +186,19 @@ int main()
 	return 0; // shut up gcc
 }
 
-inline void calc_pwm(struct pwm *input, unsigned int cur) {
+inline void get_pwm_input(struct pwm *input, unsigned int cur) {
 	if (cur == input->prev) {
-		if (cur) {
-			input->count++;
-			// input->count += 0xFFFF/SAMPLE_RANGE - 1;
-		}
+		if (cur) input->count++;
 	} else {
 		if (cur) {
 			input->count = 1;
 		} else {
 			recompute_flag = 1;
 			input->buf = input->count;
+			if input->buf < SAMPLE_MIN
+				input->buf = SAMPLE_MIN;
+			if input->buf > SAMPLE_MAX
+				input->buf = SAMPLE_MAX;
 		}
 	}
 }
