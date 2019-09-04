@@ -60,6 +60,7 @@ float trig_atan2 (float y, float x) {
 		}
 		return trig_atan(y/x);
 	}
+	return M_PI/4;
 }
 
 float trig_atan (float x) {

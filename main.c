@@ -33,8 +33,8 @@
 #define SAMPLE_MIN (PWM_MIN_US/SAMPLE_PERIOD_US)
 #define SAMPLE_MAX (PWM_MAX_US/SAMPLE_PERIOD_US)
 
-#define FLOAT2PWM(in) (((unsigned int) in)*(SAMPLE_RANGE)+SAMPLE_MIN+SAMPLE_RANGE/2)
-#define PWM2FLOAT(in) (((((float)in)-((SAMPLE_RANGE/2)+SAMPLE_MIN)))/(SAMPLE_RANGE/2))
+#define FLOAT2PWM(in) (unsigned int)((in)*(SAMPLE_RANGE/2)+SAMPLE_MIN+SAMPLE_RANGE/2)
+#define PWM2FLOAT(in) (float)(((((float)in)-((SAMPLE_RANGE/2)+SAMPLE_MIN)))/(SAMPLE_RANGE/2))
 
 #define MAX(_v,_max) (_v > _max ? _max : _v)
 #define MIN(_v,_min) (_v < _min ? _min : _v)
@@ -67,7 +67,7 @@ struct pwm_out {
 void calc_pwm(struct pwm *input, unsigned int cur);
 void set_pwm_output (struct pwm_out *out, unsigned int motor);
 
-int recompute_flag = 1;
+volatile int recompute_flag = 0;
 
 int main()
 {
@@ -117,11 +117,11 @@ int main()
 
 		// store P1IN value so it can't change under us / we're looking at a single slice in time
 		p1inbuf = P1IN;
-
+/*
 		calc_pwm(&inputs[XBUF], p1inbuf & X_AXIS ? 1 : 0);
 		calc_pwm(&inputs[YBUF], p1inbuf & Y_AXIS ? 1 : 0);
 		calc_pwm(&inputs[ABUF], p1inbuf & A_AXIS ? 1 : 0);
-
+*/
 		/*
 		 * The value in inputs[].buf is the length of the pwm pulse. 150 (1.5ms) is neutral
 		 * 50 (0.5ms) is minimum value and 250 (2.5ms) is maximum value
@@ -148,21 +148,25 @@ int main()
 		// if (cycles++ % (1<<15) == 0 ) {
 		// Don't do all this expensive floating point math unless one of the inputs has changed
 		// Doesn't this mean that sending a lot of commands will diminish performance???
+		float testf = trig_sinf(3.1415);
 		if (recompute_flag) {
 			float x = PWM2FLOAT(inputs[XBUF].buf);
 			float y = PWM2FLOAT(inputs[YBUF].buf);
-			float a = -PWM2FLOAT(inputs[ABUF].buf);
 
 				
 			// derive theta, magnitude, and rotation
-			float theta_d = trig_tanf(x/y);
 			float v_d = sqrtf(x*x + y*y);
-			float v_theta = (a + 1) * M_PI;
+			float v_theta = PWM2FLOAT(inputs[ABUF].buf);
+
+			float trig_arg = M_PI/4 - trig_atan2(x,y);
+			float vdcos = v_d * trig_sinf(trig_arg);
+			float vdsin = v_d * trig_cosf(trig_arg);
+			// float vdcos = M_PI/2;
 			
-			outputs[M1].width = MINMAX(FLOAT2PWM(v_d * trig_sinf(-theta_d + M_PI/4) - v_theta),SAMPLE_MIN,SAMPLE_MAX);
-			outputs[M2].width = MINMAX(FLOAT2PWM(v_d * trig_cosf(-theta_d + M_PI/4) + v_theta),SAMPLE_MIN,SAMPLE_MAX);
-			outputs[M3].width = MINMAX(FLOAT2PWM(v_d * trig_cosf(-theta_d + M_PI/4) - v_theta),SAMPLE_MIN,SAMPLE_MAX);
-			outputs[M4].width = MINMAX(FLOAT2PWM(v_d * trig_sinf(-theta_d + M_PI/4) + v_theta),SAMPLE_MIN,SAMPLE_MAX);
+			outputs[M1].width = FLOAT2PWM(vdsin - v_theta);
+			outputs[M2].width = FLOAT2PWM(vdcos + v_theta);
+			outputs[M3].width = FLOAT2PWM(vdcos - v_theta);
+			outputs[M4].width = FLOAT2PWM(vdsin + v_theta);
 
 			recompute_flag = 0;
 		}
@@ -176,7 +180,8 @@ int main()
 		set_pwm_output(&outputs[M4], MOTOR4);
 
 		// Go to sleep until TAR hits the value in TACCR0
-		__low_power_mode_0();
+		// if (TAR < TACCR0)
+			__low_power_mode_0();
 	}
 
 	return 0; // shut up gcc

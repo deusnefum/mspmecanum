@@ -28,7 +28,7 @@ proc FIX162PWM {in} {
 	expr {int(($in * ($::SAMPLE_RANGE/2))) + $::SAMPLE_MIN + $::SAMPLE_RANGE/2}
 }
 
-set x [PWM2FIX16 150]
+set x [PWM2FIX16 250]
 set y [PWM2FIX16 150]
 set a [PWM2FIX16 150]
 
@@ -97,7 +97,7 @@ proc atan2 {y x} {
 		return -$M_PI_2
 	}
 }
-#return
+return
 for {set x -1} { $x < 1 } {set x [expr {$x + 0.01 }]} {
 	for {set y -1} { $y < 1 } {set y [expr {$y + 0.01 }]} {
 		#puts "x: $x  y: $y"

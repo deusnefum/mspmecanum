@@ -1,6 +1,6 @@
 MCU=msp430g2553
 
-CFLAGS=-mmcu=${MCU} -std=c99 -pedantic -Wall -O2
+CFLAGS=-mmcu=${MCU} -std=c99 -pedantic -Wall -O1
 
 .PHONY: all lint prog
 
