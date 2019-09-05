@@ -1,7 +1,6 @@
 #include <msp430.h>
 #include <stdint.h>
-#include <fastmath.h>
-#include "trig.h"
+#include "libfixmath/libfixmath/fixmath.h"
 
 
 #define X_AXIS BIT0
@@ -33,25 +32,21 @@
 #define SAMPLE_MIN (PWM_MIN_US/SAMPLE_PERIOD_US)
 #define SAMPLE_MAX (PWM_MAX_US/SAMPLE_PERIOD_US)
 
-#define FLOAT2PWM(in) (unsigned int)((in)*(SAMPLE_RANGE/2)+SAMPLE_MIN+SAMPLE_RANGE/2)
-#define PWM2FLOAT(in) (float)(((((float)in)-((SAMPLE_RANGE/2)+SAMPLE_MIN)))/(SAMPLE_RANGE/2))
+#define FIX162PWM(in) ((unsigned int)fix16_to_float(fix16_add(fix16_mul(in,fix16_from_int(SAMPLE_RANGE/2)),fix16_from_int(SAMPLE_MIN+SAMPLE_RANGE/2))))
+#define PWM2FIX16(in) (fix16_div(fix16_sub(fix16_from_int(in),fix16_from_int(((SAMPLE_RANGE/2)+SAMPLE_MIN))), fix16_from_int(SAMPLE_RANGE/2)))
 
 #define MAX(_v,_max) (_v > _max ? _max : _v)
 #define MIN(_v,_min) (_v < _min ? _min : _v)
 #define MINMAX(_v, _min, _max) (MAX(MIN(_v, _min),_max))
 
-enum pwm_buffers {
-	XBUF,
-	YBUF,
-	ABUF
-};
+#define XBUF 0
+#define YBUF 1
+#define ABUF 2
 
-enum pwm_outputs {
-	M1,
-	M2,
-	M3,
-	M4
-};
+#define M1 0
+#define M2 1
+#define M3 2
+#define M4 3
 
 struct pwm {
 	unsigned int buf;   // the current complete width calculated from wpm
@@ -64,7 +59,7 @@ struct pwm_out {
 	signed int count; // iterator variable
 };
 
-void calc_pwm(struct pwm *input, unsigned int cur);
+void get_pwm_input (struct pwm *input, unsigned int cur);
 void set_pwm_output (struct pwm_out *out, unsigned int motor);
 
 volatile int recompute_flag = 0;
@@ -117,11 +112,10 @@ int main()
 
 		// store P1IN value so it can't change under us / we're looking at a single slice in time
 		p1inbuf = P1IN;
-/*
-		calc_pwm(&inputs[XBUF], p1inbuf & X_AXIS ? 1 : 0);
-		calc_pwm(&inputs[YBUF], p1inbuf & Y_AXIS ? 1 : 0);
-		calc_pwm(&inputs[ABUF], p1inbuf & A_AXIS ? 1 : 0);
-*/
+		get_pwm_input(&inputs[XBUF], p1inbuf & X_AXIS ? 1 : 0);
+		get_pwm_input(&inputs[YBUF], p1inbuf & Y_AXIS ? 1 : 0);
+		get_pwm_input(&inputs[ABUF], p1inbuf & A_AXIS ? 1 : 0);
+
 		/*
 		 * The value in inputs[].buf is the length of the pwm pulse. 150 (1.5ms) is neutral
 		 * 50 (0.5ms) is minimum value and 250 (2.5ms) is maximum value
@@ -139,34 +133,24 @@ int main()
 
 		 */
 
-		// If this trig garbage takes to long to complete we can opt to do it only every
-		// other loop or 1/10th a loop (or up the DCO clock)
-
-		// do trig here to reconcile X, Y, and A axes
-		// LMAO, I just realized I know how to reconsile X and Y but A is 🤷
-		// Okay, internet to the rescue... found some equations to crib
-		// if (cycles++ % (1<<15) == 0 ) {
-		// Don't do all this expensive floating point math unless one of the inputs has changed
-		// Doesn't this mean that sending a lot of commands will diminish performance???
-		float testf = trig_sinf(3.1415);
+		// if input PWM has changed, recompute our outputs
 		if (recompute_flag) {
-			float x = PWM2FLOAT(inputs[XBUF].buf);
-			float y = PWM2FLOAT(inputs[YBUF].buf);
-
-				
-			// derive theta, magnitude, and rotation
-			float v_d = sqrtf(x*x + y*y);
-			float v_theta = PWM2FLOAT(inputs[ABUF].buf);
-
-			float trig_arg = M_PI/4 - trig_atan2(x,y);
-			float vdcos = v_d * trig_sinf(trig_arg);
-			float vdsin = v_d * trig_cosf(trig_arg);
-			// float vdcos = M_PI/2;
+			fix16_t x = PWM2FIX16(inputs[XBUF].buf);
+			fix16_t y = PWM2FIX16(inputs[YBUF].buf);
+			fix16_t v_theta = PWM2FIX16(inputs[ABUF].buf);
 			
-			outputs[M1].width = FLOAT2PWM(vdsin - v_theta);
-			outputs[M2].width = FLOAT2PWM(vdcos + v_theta);
-			outputs[M3].width = FLOAT2PWM(vdcos - v_theta);
-			outputs[M4].width = FLOAT2PWM(vdsin + v_theta);
+			// derive theta (angle of desired movement), and magnitude (v_d)
+			fix16_t theta_d = fix16_atan2(y,x);
+			fix16_t v_d = fix16_sqrt(fix16_add(fix16_mul(x,x), fix16_mul(y,y)));
+
+			fix16_t trig_arg = fix16_sub(PI_DIV_4, theta_d);
+			fix16_t vdcos = fix16_mul(v_d, fix16_cos(trig_arg));
+			fix16_t vdsin = fix16_mul(v_d, fix16_sin(trig_arg));
+			
+			outputs[M1].width = FIX162PWM(fix16_sub(vdsin, v_theta));
+			outputs[M2].width = FIX162PWM(fix16_add(vdcos, v_theta));
+			outputs[M3].width = FIX162PWM(fix16_sub(vdcos, v_theta));
+			outputs[M4].width = FIX162PWM(fix16_add(vdsin, v_theta));
 
 			recompute_flag = 0;
 		}
@@ -187,18 +171,17 @@ int main()
 	return 0; // shut up gcc
 }
 
-inline void calc_pwm(struct pwm *input, unsigned int cur) {
+inline void get_pwm_input(struct pwm *input, unsigned int cur) {
 	if (cur == input->prev) {
-		if (cur) {
-			input->count++;
-			// input->count += 0xFFFF/SAMPLE_RANGE - 1;
-		}
+		if (cur) input->count++;
 	} else {
 		if (cur) {
 			input->count = 1;
 		} else {
-			recompute_flag = 1;
-			input->buf = input->count;
+			if (input->buf != input->count) {
+				recompute_flag = 1;
+				input->buf = input->count;
+			}
 			if (input->buf < SAMPLE_MIN)
 				input->buf = SAMPLE_MIN;
 			if (input->buf > SAMPLE_MAX)
@@ -223,4 +206,3 @@ __interrupt_vec(TIMER0_A0_VECTOR) void timerisr()
 {
 	__low_power_mode_off_on_exit();
 }
-
