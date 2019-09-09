@@ -14,6 +14,11 @@ For all the necessary math, I used libfixmath, a fixed point math library implem
 
 Cross compiling libfixmath for MSP430 basically worked without issue, I just had to change all the binutils from gcc to msp430-elf-gcc.
 
+I've included a copy of the libfixmath code and modified the Makefile a tad to make compiling go more smoothly.
+
+## Compiling
+
+If you've got msp430-elf-gcc installed (on Archlinux, that's the msp430-elf-gcc package and its dependencies, available in the AUR), compiling is as easy as running make.
 
 ## Disclaimer
 

@@ -1,6 +1,6 @@
 #include <msp430.h>
 #include <stdint.h>
-#include "libfixmath/libfixmath/fixmath.h"
+#include <fixmath.h>
 
 
 #define X_AXIS BIT0
@@ -163,8 +163,12 @@ int main()
 		set_pwm_output(&outputs[M3], MOTOR3);
 		set_pwm_output(&outputs[M4], MOTOR4);
 
-		// Go to sleep until TAR hits the value in TACCR0
-		// if (TAR < TACCR0)
+		// if we did a recompute, we may have missed the sleep window
+		// if we go to sleep *after* the sleep window, we sleep for *way*
+		// too long.
+		// the OR is there incase we wrapped the integer
+		if (TAR < TACCR0 || TAR + (SAMPLE_PERIOD_US-1) * 16 < TACCR0 + (SAMPLE_PERIOD_US-1) * 16)
+			// Go to sleep until TAR hits the value in TACCR0
 			__low_power_mode_0();
 	}
 
@@ -194,6 +198,9 @@ inline void set_pwm_output (struct pwm_out *out, unsigned int motor) {
 	if (--out->count <= 0) {
 		if (P1OUT & motor) {
 			// output was high, time to switch to low-output
+			// TODO: There's a minor bug here. if we change the width we'll 
+			// have a single frame that's off and will cause our PWm singles to fall out of
+			// sync--probably doesn't matter 
 			out->count = PWM_WINDOW - out->width;
 		} else {
 			out->count = out->width;
@@ -202,7 +209,6 @@ inline void set_pwm_output (struct pwm_out *out, unsigned int motor) {
 	}
 }
 
-__interrupt_vec(TIMER0_A0_VECTOR) void timerisr()
-{
+__interrupt_vec(TIMER0_A0_VECTOR) void timerisr(){
 	__low_power_mode_off_on_exit();
 }
